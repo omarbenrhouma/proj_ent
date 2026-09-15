@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: candidate_platform
+      POSTGRES_USER: candidate
+      POSTGRES_PASSWORD: candidate_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  backend:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://candidate:candidate_dev_password@postgres:5432/candidate_platform
+      SECRET_KEY: change-me-before-production
+      CORS_ORIGINS: http://localhost:4173
+    ports:
+      - "8000:8000"
+    depends_on:
+      - postgres
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "4173:80"
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
