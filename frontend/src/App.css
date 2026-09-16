@@ -99,9 +99,8 @@
 .category-grid{display:grid;gap:12px;margin:34px 0 30px}
 .category-card{display:flex;align-items:center;justify-content:space-between;padding:20px 22px;border:1px solid var(--line);border-radius:14px;background:var(--paper);color:var(--ink);text-align:left;font-size:1rem;transition:border-color .15s,transform .15s,box-shadow .15s}
 .category-card:hover{border-color:var(--clay);transform:translateY(-2px);box-shadow:0 8px 20px rgba(20,35,31,.06)}
-.category-card .num{color:var(--muted);font-size:.85rem}
 .category-card.done{border-color:#bfe0d8;background:#f4faf8}
-.category-card.done .num{color:#0b4f45;font-weight:700}
+.category-done-mark{color:#0b4f45;font-weight:700}
 .category-picker-note{margin-top:12px;font-size:.85rem}
 .test-shell .question-panel{width:min(720px,calc(100% - 48px));margin:auto;padding:9vh 0 60px}
 .question-heading{display:flex;align-items:center;gap:12px;justify-content:flex-start}
