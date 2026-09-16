@@ -106,3 +106,8 @@
 .question-heading{display:flex;align-items:center;gap:12px;justify-content:flex-start}
 .question-heading .num{margin-left:auto}
 .back-to-categories{padding-left:0;color:var(--muted)}
+
+/* Candidate result screen: no score exposed, just a clean confirmation */
+.thank-you-card{max-width:560px;padding:52px;margin-top:20px;border-radius:20px;color:#fff;background:var(--navy)}
+.thank-you-card h1{color:#fff}
+.thank-you-card .muted{margin-top:14px;color:#c3d6ce;font-size:1.05rem;line-height:1.6}
