@@ -4,7 +4,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    database_url: str = "sqlite:///./candidate_platform.db"
+    # Fresh development dataset. The previous file may remain locked while an
+    # old development server is still running; it is no longer used.
+    database_url: str = "sqlite:///./candidate_platform_v2.db"
     secret_key: str = "change-me-in-development"
     access_token_expire_minutes: int = 30
     cors_origins: str = "http://localhost:5173,http://localhost:5174,http://localhost:5175,http://127.0.0.1:5173,http://127.0.0.1:5174,http://127.0.0.1:5175"

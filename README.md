@@ -71,3 +71,12 @@ Les QCM externes sont importés comme brouillons : ils doivent être relus et va
 cd backend
 python import_questions.py C:\Users\omarb\Downloads\questions_entretien_complet.json
 ```
+
+### Processus candidat simplifié
+
+1. Créer un compte et déposer son CV.
+2. Démarrer un seul QCM de 25 minutes.
+3. Répondre à 15 questions à choix unique : Technique (6), Métier Retail (3), Analyse (2), Logique (4).
+4. Soumettre et consulter le résultat si la campagne l’autorise.
+
+La banque complète reste disponible à l’administration ; le candidat ne voit jamais les corrections ni les questions non sélectionnées.

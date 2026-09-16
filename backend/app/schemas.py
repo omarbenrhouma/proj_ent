@@ -30,6 +30,10 @@ class ProfileResponse(BaseModel):
     education: str | None = None
     experience: str | None = None
     cv_name: str | None = None
+    location: str | None = None
+    linkedin_url: str | None = None
+    availability: str | None = None
+    summary: str | None = None
 
 
 class CvResponse(BaseModel):
@@ -43,6 +47,10 @@ class ProfileUpdateRequest(BaseModel):
     phone: str | None = Field(default=None, max_length=40)
     education: str | None = Field(default=None, max_length=4000)
     experience: str | None = Field(default=None, max_length=4000)
+    location: str | None = Field(default=None, max_length=150)
+    linkedin_url: str | None = Field(default=None, max_length=500)
+    availability: str | None = Field(default=None, max_length=100)
+    summary: str | None = Field(default=None, max_length=2000)
 
 
 class QuestionResponse(BaseModel):
@@ -118,6 +126,31 @@ class CandidateDetailResponse(CandidateListItem):
     experience: str | None = None
     breakdown: dict[str, Any] = Field(default_factory=dict)
     answers: list[CandidateAnswerDetail] = Field(default_factory=list)
+    location: str | None = None
+    linkedin_url: str | None = None
+    availability: str | None = None
+    summary: str | None = None
+
+
+class CandidateManageRequest(BaseModel):
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
+    email: EmailStr
+    phone: str | None = Field(default=None, max_length=40)
+    education: str | None = Field(default=None, max_length=4000)
+    experience: str | None = Field(default=None, max_length=4000)
+    location: str | None = Field(default=None, max_length=150)
+    linkedin_url: str | None = Field(default=None, max_length=500)
+    availability: str | None = Field(default=None, max_length=100)
+    summary: str | None = Field(default=None, max_length=2000)
+    location: str | None = Field(default=None, max_length=150)
+    linkedin_url: str | None = Field(default=None, max_length=500)
+    availability: str | None = Field(default=None, max_length=100)
+    summary: str | None = Field(default=None, max_length=2000)
+    location: str | None = Field(default=None, max_length=150)
+    linkedin_url: str | None = Field(default=None, max_length=500)
+    availability: str | None = Field(default=None, max_length=100)
+    summary: str | None = Field(default=None, max_length=2000)
 
 
 class QuestionOptionPayload(BaseModel):
@@ -152,6 +185,10 @@ class QuestionCreateRequest(BaseModel):
 
 class QuestionUpdateRequest(QuestionCreateRequest):
     status: str = "DRAFT"
+
+
+class QuestionArchiveRequest(BaseModel):
+    question_ids: list[str] = Field(min_length=1)
 
 
 class TestVersionItem(BaseModel):

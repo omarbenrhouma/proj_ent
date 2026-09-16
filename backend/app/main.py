@@ -8,13 +8,13 @@ from fastapi.responses import FileResponse, StreamingResponse
 from io import StringIO
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.db import Base, engine, get_db
 from app.models import Campaign, CandidateAnswer, CandidateProfile, CandidateTest, Category, CvDocument, Question, Role, Skill, TestStatus, TestVersion, TestVersionQuestion, User
-from app.schemas import AdminQuestionItem, AnswerRequest, CandidateAnswerDetail, CandidateDetailResponse, CandidateListItem, CvResponse, DashboardResponse, JobOfferResponse, LoginRequest, ProfileResponse, ProfileUpdateRequest, QuestionCreateRequest, QuestionResponse, QuestionUpdateRequest, RegisterRequest, ScoreResponse, TestStateResponse, TestVersionCreateRequest, TestVersionItem, TestVersionQuestionsRequest, TokenResponse
+from app.schemas import AdminQuestionItem, AnswerRequest, CandidateAnswerDetail, CandidateDetailResponse, CandidateListItem, CandidateManageRequest, CvResponse, DashboardResponse, JobOfferResponse, LoginRequest, ProfileResponse, ProfileUpdateRequest, QuestionArchiveRequest, QuestionCreateRequest, QuestionResponse, QuestionUpdateRequest, RegisterRequest, ScoreResponse, TestStateResponse, TestVersionCreateRequest, TestVersionItem, TestVersionQuestionsRequest, TokenResponse
 from app.security import create_access_token, decode_subject, hash_password, verify_password
 from app.services import assign_test, expire_if_needed, submit_test
 
@@ -22,6 +22,12 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     Base.metadata.create_all(bind=engine)
+    if engine.url.get_backend_name() == "sqlite":
+        with engine.begin() as connection:
+            existing = {row[1] for row in connection.execute(text("PRAGMA table_info(candidate_profiles)"))}
+            for name, definition in {"location": "VARCHAR(150)", "linkedin_url": "VARCHAR(500)", "availability": "VARCHAR(100)", "summary": "TEXT"}.items():
+                if name not in existing:
+                    connection.execute(text(f"ALTER TABLE candidate_profiles ADD COLUMN {name} {definition}"))
     yield
 
 
@@ -66,7 +72,7 @@ def recruiter_only(user: User = Depends(current_user)) -> User:
 
 
 def admin_only(user: User = Depends(current_user)) -> User:
-    if user.role != Role.ADMIN:
+    if user.role not in (Role.RECRUITER, Role.ADMIN):
         raise HTTPException(status_code=403, detail="Accès administrateur requis")
     return user
 
@@ -105,7 +111,7 @@ def me(user: User = Depends(current_user)) -> dict[str, str]:
 def profile(user: User = Depends(candidate_only), db: Session = Depends(get_db)) -> ProfileResponse:
     profile_data = user.profile
     document = db.scalar(select(CvDocument).where(CvDocument.candidate_id == user.id))
-    return ProfileResponse(user_id=user.id, email=user.email, first_name=profile_data.first_name, last_name=profile_data.last_name, phone=profile_data.phone, education=profile_data.education, experience=profile_data.experience, cv_name=document.original_name if document else None)
+    return ProfileResponse(user_id=user.id, email=user.email, first_name=profile_data.first_name, last_name=profile_data.last_name, phone=profile_data.phone, education=profile_data.education, experience=profile_data.experience, cv_name=document.original_name if document else None, location=profile_data.location, linkedin_url=profile_data.linkedin_url, availability=profile_data.availability, summary=profile_data.summary)
 
 
 @app.get("/api/v1/candidate/job-offers", response_model=list[JobOfferResponse])
@@ -122,6 +128,8 @@ def job_offers(user: User = Depends(candidate_only), db: Session = Depends(get_d
 def update_profile(payload: ProfileUpdateRequest, user: User = Depends(candidate_only), db: Session = Depends(get_db)) -> ProfileResponse:
     profile_data = user.profile
     profile_data.phone, profile_data.education, profile_data.experience = payload.phone, payload.education, payload.experience
+    profile_data.location, profile_data.linkedin_url = payload.location, payload.linkedin_url
+    profile_data.availability, profile_data.summary = payload.availability, payload.summary
     db.commit()
     return profile(user, db)
 
@@ -158,7 +166,7 @@ def test_state(campaign_id: str | None = None, user: User = Depends(candidate_on
 
 
 @app.post("/api/v1/candidate/test/start", response_model=TestStateResponse)
-def start_test(campaign_id: str, user: User = Depends(candidate_only), db: Session = Depends(get_db)) -> TestStateResponse:
+def start_test(campaign_id: str | None = None, user: User = Depends(candidate_only), db: Session = Depends(get_db)) -> TestStateResponse:
     assignment = assign_test(db, user, campaign_id)
     if assignment.status == TestStatus.ASSIGNED:
         assignment.status = TestStatus.IN_PROGRESS
@@ -170,7 +178,7 @@ def start_test(campaign_id: str, user: User = Depends(candidate_only), db: Sessi
 
 
 @app.get("/api/v1/candidate/test/questions", response_model=list[QuestionResponse])
-def questions(campaign_id: str, user: User = Depends(candidate_only), db: Session = Depends(get_db)) -> list[QuestionResponse]:
+def questions(campaign_id: str | None = None, user: User = Depends(candidate_only), db: Session = Depends(get_db)) -> list[QuestionResponse]:
     assignment = expire_if_needed(db, assign_test(db, user, campaign_id))
     if assignment.status != TestStatus.IN_PROGRESS:
         raise HTTPException(status_code=409, detail="Le test doit être démarré avant d'accéder aux questions")
@@ -185,7 +193,7 @@ def questions(campaign_id: str, user: User = Depends(candidate_only), db: Sessio
 
 
 @app.get("/api/v1/candidate/test/answers")
-def saved_answers(campaign_id: str, user: User = Depends(candidate_only), db: Session = Depends(get_db)) -> dict[str, dict]:
+def saved_answers(campaign_id: str | None = None, user: User = Depends(candidate_only), db: Session = Depends(get_db)) -> dict[str, dict]:
     assignment = expire_if_needed(db, assign_test(db, user, campaign_id))
     return {answer.question_id: {"answer": answer.answer, "marked_for_review": answer.marked_for_review} for answer in assignment.answers}
 
@@ -226,8 +234,9 @@ def result(campaign_id: str, user: User = Depends(candidate_only), db: Session =
 
 @app.get("/api/v1/recruiter/dashboard", response_model=DashboardResponse)
 def recruiter_dashboard(user: User = Depends(recruiter_only), db: Session = Depends(get_db)) -> DashboardResponse:
-    candidates = list(db.scalars(select(User).where(User.role == Role.CANDIDATE)).all())
-    assignments = list(db.scalars(select(CandidateTest).order_by(CandidateTest.id)).all())
+    candidates = list(db.scalars(select(User).where(User.role == Role.CANDIDATE, User.is_active.is_(True))).all())
+    candidate_ids = [candidate.id for candidate in candidates]
+    assignments = list(db.scalars(select(CandidateTest).where(CandidateTest.candidate_id.in_(candidate_ids)).order_by(CandidateTest.id)).all())
     rows: list[CandidateListItem] = []
     scores = [assignment.score.normalized_score for assignment in assignments if assignment.score]
     for candidate in candidates:
@@ -244,7 +253,7 @@ def recruiter_candidate_row(db: Session, candidate: User) -> CandidateListItem:
 
 @app.get("/api/v1/recruiter/candidates", response_model=list[CandidateListItem])
 def recruiter_candidates(query: str = "", status_filter: str | None = Query(None, alias="status"), level: str | None = None, sort: str = "submitted_at", direction: str = "desc", user: User = Depends(recruiter_only), db: Session = Depends(get_db)) -> list[CandidateListItem]:
-    rows = [recruiter_candidate_row(db, candidate) for candidate in db.scalars(select(User).where(User.role == Role.CANDIDATE)).all()]
+    rows = [recruiter_candidate_row(db, candidate) for candidate in db.scalars(select(User).where(User.role == Role.CANDIDATE, User.is_active.is_(True))).all()]
     needle = query.casefold().strip()
     if needle:
         rows = [row for row in rows if needle in f"{row.first_name} {row.last_name} {row.email}".casefold()]
@@ -253,14 +262,20 @@ def recruiter_candidates(query: str = "", status_filter: str | None = Query(None
     reverse = direction.lower() != "asc"
     if sort == "name": rows.sort(key=lambda row: (row.last_name.casefold(), row.first_name.casefold()), reverse=reverse)
     elif sort == "score": rows.sort(key=lambda row: row.score if row.score is not None else -1, reverse=reverse)
-    else: rows.sort(key=lambda row: row.submitted_at or datetime.min.replace(tzinfo=timezone.utc), reverse=reverse)
+    else:
+        def submitted_sort_key(row: CandidateListItem) -> datetime:
+            value = row.submitted_at
+            if value is None:
+                return datetime.min.replace(tzinfo=timezone.utc)
+            return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value
+        rows.sort(key=submitted_sort_key, reverse=reverse)
     return rows
 
 
 @app.get("/api/v1/recruiter/candidates/{candidate_id}", response_model=CandidateDetailResponse)
 def recruiter_candidate_detail(candidate_id: str, user: User = Depends(recruiter_only), db: Session = Depends(get_db)) -> CandidateDetailResponse:
     candidate = db.get(User, candidate_id)
-    if not candidate or candidate.role != Role.CANDIDATE: raise HTTPException(status_code=404, detail="Candidat introuvable")
+    if not candidate or candidate.role != Role.CANDIDATE or not candidate.is_active: raise HTTPException(status_code=404, detail="Candidat introuvable")
     row = recruiter_candidate_row(db, candidate)
     assignment = db.scalar(select(CandidateTest).where(CandidateTest.candidate_id == candidate.id))
     details: list[CandidateAnswerDetail] = []
@@ -272,7 +287,33 @@ def recruiter_candidate_detail(candidate_id: str, user: User = Depends(recruiter
             actual = answer.answer if answer else None
             is_correct = (set(actual or []) == set(expected)) if question.question_type == "MULTIPLE_CHOICE" else str(actual).strip().lower() == (expected[0].lower() if expected else "")
             details.append(CandidateAnswerDetail(position=item.position, statement=question.statement, category=db.get(Category, question.category_id).label, skill=db.get(Skill, question.skill_id).name, candidate_answer=actual, correct_answer=expected, earned_points=item.points if is_correct else 0, maximum_points=item.points))
-    return CandidateDetailResponse(**row.model_dump(), phone=candidate.profile.phone, education=candidate.profile.education, experience=candidate.profile.experience, breakdown=assignment.score.breakdown if assignment and assignment.score else {}, answers=details)
+    return CandidateDetailResponse(**row.model_dump(), phone=candidate.profile.phone, education=candidate.profile.education, experience=candidate.profile.experience, location=candidate.profile.location, linkedin_url=candidate.profile.linkedin_url, availability=candidate.profile.availability, summary=candidate.profile.summary, breakdown=assignment.score.breakdown if assignment and assignment.score else {}, answers=details)
+
+
+@app.put("/api/v1/recruiter/candidates/{candidate_id}", response_model=CandidateDetailResponse)
+def update_candidate(candidate_id: str, payload: CandidateManageRequest, user: User = Depends(recruiter_only), db: Session = Depends(get_db)) -> CandidateDetailResponse:
+    candidate = db.get(User, candidate_id)
+    if not candidate or candidate.role != Role.CANDIDATE or not candidate.is_active:
+        raise HTTPException(status_code=404, detail="Candidat introuvable")
+    duplicate = db.scalar(select(User).where(User.email == payload.email.lower(), User.id != candidate.id))
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Cet email est déjà utilisé")
+    candidate.email = payload.email.lower()
+    candidate.profile.first_name, candidate.profile.last_name = payload.first_name, payload.last_name
+    candidate.profile.phone, candidate.profile.education, candidate.profile.experience = payload.phone, payload.education, payload.experience
+    candidate.profile.location, candidate.profile.linkedin_url = payload.location, payload.linkedin_url
+    candidate.profile.availability, candidate.profile.summary = payload.availability, payload.summary
+    db.commit()
+    return recruiter_candidate_detail(candidate_id, user, db)
+
+
+@app.delete("/api/v1/recruiter/candidates/{candidate_id}", status_code=204)
+def deactivate_candidate(candidate_id: str, user: User = Depends(recruiter_only), db: Session = Depends(get_db)) -> None:
+    candidate = db.get(User, candidate_id)
+    if not candidate or candidate.role != Role.CANDIDATE:
+        raise HTTPException(status_code=404, detail="Candidat introuvable")
+    candidate.is_active = False
+    db.commit()
 
 
 @app.get("/api/v1/recruiter/cv/{candidate_id}")
@@ -348,6 +389,18 @@ def delete_question(question_id: str, user: User = Depends(admin_only), db: Sess
     db.commit()
 
 
+@app.post("/api/v1/admin/questions/archive")
+def archive_questions(payload: QuestionArchiveRequest, user: User = Depends(admin_only), db: Session = Depends(get_db)) -> dict[str, int]:
+    question_ids = list(dict.fromkeys(payload.question_ids))
+    questions = list(db.scalars(select(Question).where(Question.id.in_(question_ids))).all())
+    if len(questions) != len(question_ids):
+        raise HTTPException(status_code=404, detail="Une ou plusieurs questions sont introuvables")
+    for question in questions:
+        question.status = "ARCHIVED"
+    db.commit()
+    return {"archived": len(questions)}
+
+
 @app.post("/api/v1/admin/questions/{question_id}/validate", response_model=AdminQuestionItem)
 def validate_question(question_id: str, user: User = Depends(admin_only), db: Session = Depends(get_db)) -> AdminQuestionItem:
     question = db.get(Question, question_id)
@@ -376,6 +429,23 @@ def create_test_version(payload: TestVersionCreateRequest, user: User = Depends(
     version = TestVersion(campaign_id=campaign.id, code=payload.code, duration_seconds=payload.duration_seconds, published=False)
     db.add(version); db.commit(); db.refresh(version)
     return version_item(version)
+
+
+@app.delete("/api/v1/admin/test-versions/{version_id}", status_code=204)
+def delete_test_version(version_id: str, user: User = Depends(admin_only), db: Session = Depends(get_db)) -> None:
+    version = db.get(TestVersion, version_id)
+    if not version:
+        raise HTTPException(status_code=404, detail="Version introuvable")
+    assignments = list(db.scalars(select(CandidateTest).where(CandidateTest.test_version_id == version.id)).all())
+    active_assignments = db.scalar(select(CandidateTest.id).join(User, User.id == CandidateTest.candidate_id).where(CandidateTest.test_version_id == version.id, User.is_active.is_(True)))
+    if active_assignments:
+        raise HTTPException(status_code=409, detail="Cette version est déjà attribuée à un candidat actif")
+    # A deleted candidate is inactive. Its historical assignment no longer has
+    # to keep a draft version locked, so remove it with the version.
+    for assignment in assignments:
+        db.delete(assignment)
+    db.delete(version)
+    db.commit()
 
 
 @app.put("/api/v1/admin/test-versions/{version_id}/questions", response_model=TestVersionItem)
