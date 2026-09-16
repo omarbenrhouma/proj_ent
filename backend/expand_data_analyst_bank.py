@@ -25,12 +25,21 @@ def run():
   for n in range(18):
    a=n+2; seq=[a,a*2,a*4]; items.append(("LOGIQUE",f"Complétez la suite : {seq[0]}, {seq[1]}, {seq[2]}, …",str(a*8)))
   for code,statement,answer in items:
-   q=Question(category_id=cats[code].id,skill_id=skills[code].id,difficulty=Difficulty.MEDIUM,question_type=QuestionType.SINGLE_CHOICE,statement=statement,points=2,status=QuestionStatus.VALIDATED,options=option(answer)); db.add(q)
+   if not db.query(Question).filter_by(statement=statement).first():
+    q=Question(category_id=cats[code].id,skill_id=skills[code].id,difficulty=Difficulty.MEDIUM,question_type=QuestionType.SINGLE_CHOICE,statement=statement,points=2,status=QuestionStatus.VALIDATED,options=option(answer)); db.add(q)
   db.flush(); questions=db.query(Question).filter(Question.status==QuestionStatus.VALIDATED).order_by(Question.id).all()[:100]
-  for code in ["A","B","C"]:
+  by_category={code:[q for q in questions if q.category_id==cats[code].id] for code in cats}
+  blueprints={"A":{"TECHNIQUE":14,"LOGIQUE":11,"GENERAL":8},"B":{"TECHNIQUE":14,"LOGIQUE":11,"GENERAL":8},"C":{"TECHNIQUE":14,"LOGIQUE":11,"GENERAL":9}}
+  for version_index, code in enumerate(["A","B","C"]):
    v=db.query(TestVersion).filter_by(campaign_id=campaign.id,code=code).first()
    if not v: v=TestVersion(campaign_id=campaign.id,code=code,duration_seconds=2700,published=code=="A"); db.add(v); db.flush()
-   v.questions.clear(); selected=questions[{"A":0,"B":33,"C":66}[code]:{"A":33,"B":66,"C":100}[code]]
+   v.questions.clear(); db.flush(); selected=[]
+   for category_code,count in blueprints[code].items():
+    pool=by_category[category_code]; start=(version_index*count)%len(pool)
+    selected.extend((pool+pool)[start:start+count])
+   # Keep each section continuous: technical, then logic, then business/general.
+   grouped={category_code:[q for q in selected if q.category_id==cats[category_code].id] for category_code in blueprints[code]}
+   selected=grouped["TECHNIQUE"] + grouped["LOGIQUE"] + grouped["GENERAL"]
    for pos,q in enumerate(selected,1): v.questions.append(TestVersionQuestion(question_id=q.id,position=pos,points=q.points))
   db.commit(); print(len(questions),"questions; 3 versions created")
  finally: db.close()
